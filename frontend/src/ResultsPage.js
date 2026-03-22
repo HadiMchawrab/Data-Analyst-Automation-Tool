@@ -5,10 +5,24 @@ import './ResultsPage.css';
 const ResultsPage = ({ topics, tables }) => {
   const navigate = useNavigate();
 
+  if (!topics || topics.length === 0) {
+    return (
+      <div className="results-page">
+        <h2>No Topics Available</h2>
+        <div className="empty-state">
+          <p>No analysis topics have been generated yet. Please upload your CSV files first to generate topics.</p>
+          <button
+            className="back-to-upload-button"
+            onClick={() => navigate('/')}
+          >
+            Go to Upload Page
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const handleTopicClick = (topic) => {
-    console.log('ResultsPage - Clicked topic:', topic.topic);
-    console.log('ResultsPage - GPT_Columns for topic:', topic.GPT_Columns);
-    
     navigate('/topic-details', { 
       state: { 
         topic: {
