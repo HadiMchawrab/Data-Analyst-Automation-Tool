@@ -579,10 +579,57 @@ print(f"Final memory usage: {{get_memory_usage()}}")
             logger.error(f"Error during training notebook execution: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error during training notebook execution: {str(e)}")
         
-        # Simply return success since files are saved in volume
+        # Extract metrics from executed notebook before cleanup
+        metrics = {}
+        training_log = ""
+        try:
+            if os.path.exists(executed_notebook_filename):
+                with open(executed_notebook_filename, 'r', encoding='utf-8') as nb_file:
+                    executed_nb = nbformat.read(nb_file, as_version=4)
+
+                for cell in executed_nb.cells:
+                    if cell.cell_type == 'code' and hasattr(cell, 'outputs'):
+                        for output in cell.outputs:
+                            text = ""
+                            if output.output_type == 'stream' and hasattr(output, 'text'):
+                                text = output.text
+                            elif output.output_type == 'execute_result' and 'text/plain' in output.get('data', {}):
+                                text = output['data']['text/plain']
+                            training_log += text
+
+                            if '###METRICS_START###' in text:
+                                try:
+                                    start = text.index('###METRICS_START###') + len('###METRICS_START###')
+                                    end = text.index('###METRICS_END###')
+                                    metrics_json = text[start:end].strip()
+                                    # Sanitize common JSON issues from numpy
+                                    metrics_json = metrics_json.replace('NaN', 'null').replace('Infinity', '"Infinity"').replace('-Infinity', '"-Infinity"')
+                                    metrics = json.loads(metrics_json)
+                                except (ValueError, json.JSONDecodeError) as parse_err:
+                                    logger.warning(f"Failed to parse metrics JSON: {parse_err}")
+        except Exception as metrics_err:
+            logger.warning(f"Failed to extract metrics from notebook: {metrics_err}")
+
+        # Extract model weights if saved to shared volume
+        model_weights = None
+        model_path = f"/notebook_output/{table_name}/{table_name}_model.pkl"
+        try:
+            if os.path.exists(model_path):
+                with open(model_path, 'rb') as model_file:
+                    model_weights = base64.b64encode(model_file.read()).decode('utf-8')
+                logger.info(f"Model weights loaded from {model_path} ({len(model_weights)} chars base64)")
+            else:
+                logger.warning(f"Model file not found at {model_path}")
+        except Exception as model_err:
+            logger.warning(f"Failed to read model weights: {model_err}")
+
         return {
             "message": "Training analysis completed successfully",
-            "status": "success"
+            "status": "success",
+            "metrics": metrics,
+            "training_log": training_log[-2000:] if len(training_log) > 2000 else training_log,
+            "model_weights": model_weights,
+            "model_path": model_path if model_weights else None
         }
     
     except Exception as e:

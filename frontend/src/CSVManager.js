@@ -2,23 +2,6 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useNavigate } from 'react-router-dom';
 
-function parseTables(tablesText) {
-  const tables = [];
-  const columnsByTable = {};
-
-  const regex = /Table\s+(\w+):[\s\S]*?Has Columns:\s(.+?)(?=\n\n|$)/g;
-  let match;
-
-  while ((match = regex.exec(tablesText)) !== null) {
-    const tableName = match[1].trim();
-    const columns = match[2].split(',').map(c => c.trim());
-    tables.push(tableName);
-    columnsByTable[tableName] = columns;
-  }
-
-  return { tables, columnsByTable };
-}
-
 const CSVManager = ({ onProcessComplete }) => {
   const [files, setFiles] = useState([]);
   const [descriptions, setDescriptions] = useState({});
