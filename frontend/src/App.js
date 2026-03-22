@@ -14,7 +14,6 @@ function App() {
   const [tables, setTables] = useState([]);
   const [columnsByTable, setColumnsByTable] = useState({});
   const [analyzedArticles, setAnalyzedArticles] = useState({});
-  const [scrapedArticles, setScrapedArticles] = useState({});
   const [relationships, setRelationships] = useState({});
   const [explanations, setExplanations] = useState({});
   const [modelsPerTopic, setModelsPerTopic] = useState({});
@@ -25,7 +24,6 @@ function App() {
     setTables(result.tables || []);
     setColumnsByTable(result.columnsByTable || {});
     setAnalyzedArticles(result.analyzedArticles || {});
-    setScrapedArticles(result.scrapedArticles || {});
     setRelationships(result.relationships || {});
     setExplanations(result.explanations || {});
     setModelsPerTopic(result.modelsPerTopic || {});
@@ -50,12 +48,11 @@ function App() {
             <Route 
               path="/results" 
               element={
-                <ResultsPage 
+                <ResultsPage
                   topics={topics}
                   tables={tables}
                   columnsByTable={columnsByTable}
                   analyzedArticles={analyzedArticles}
-                  scrapedArticles={scrapedArticles}
                   relationships={relationships}
                   explanations={explanations}
                   modelsPerTopic={modelsPerTopic}

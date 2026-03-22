@@ -17,15 +17,13 @@ const AnalysisPage = () => {
       return;
     }
 
-    console.log('Submission data in AnalysisPage:', submissionData);
-    console.log('Tables in AnalysisPage:', tables);
-
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
 
     const pollForResults = async () => {
       try {
-        const response = await fetch('http://localhost:5000/submit-data', {
+        const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+        const response = await fetch(`${API_URL}/submit-data`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -40,12 +38,7 @@ const AnalysisPage = () => {
         }
 
         const data = await response.json();
-        console.log('Full analysis results received:', data);
-        console.log('Images data:', data.images);
-        console.log('Chosen models:', data.chosen_models);
-        console.log('Explained models:', data.explained_models);
-        console.log('Final scripts:', data.FinalScripts);
-        
+
         // Only proceed with navigation if the component is still mounted
         if (abortControllerRef.current) {
           setIsLoading(false);
@@ -61,13 +54,11 @@ const AnalysisPage = () => {
             tables: submissionData.tables,
             images_bytes: data.images
           };
-          console.log('State being passed to DataAnalysisPage:', analysisState);
           navigate('/data-analysis', { state: analysisState });
         }
       } catch (err) {
         // Only update state if the error is not from aborting
         if (err.name !== 'AbortError') {
-          console.error('Error in analysis:', err);
           setError(err.message);
           setIsLoading(false);
         }

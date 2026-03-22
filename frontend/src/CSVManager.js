@@ -71,23 +71,18 @@ const CSVManager = ({ onProcessComplete }) => {
       });
 
       // Send the request to the backend
-      const response = await fetch('http://localhost:5000/upload-and-process', {
+      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const response = await fetch(`${API_URL}/upload-and-process`, {
         method: 'POST',
         body: formData
       });
 
       const response_result = await response.json();
-      console.log('Backend response:', response_result);
 
       if (!response.ok) {
         throw new Error(response_result.detail?.message || 'Failed to process files');
       }
       const backendData = response_result.result;
-      console.log('Full backend response:', backendData);
-      console.log('Topics from backend:', backendData.topic);
-      console.log('ML Models from backend:', backendData.ML_Models1);
-      console.log('Models per topic:', backendData.ModelsPerTopic);
-      console.log('GPT Columns structure:', backendData.GPT_Columns);
 
       if (!Array.isArray(backendData.topic)) {
         throw new Error("Invalid backend response: topic array is missing");
@@ -95,7 +90,6 @@ const CSVManager = ({ onProcessComplete }) => {
 
       const transformedResult = {
         topics: backendData.topic.map((topicName, index) => {
-          console.log('Processing topic:', topicName);
           return {
             topic: topicName,
             reasoning: (backendData.analyzed_topics?.[index]?.reasoning || ""),
@@ -111,14 +105,12 @@ const CSVManager = ({ onProcessComplete }) => {
         tables: backendData.tables || []
       };
 
-      console.log('Transformed result:', transformedResult);
       onProcessComplete(transformedResult);
       
       navigate('/results');
     } catch (error) {
       console.error('Error processing files:', error);
       setError(error.message);
-      alert(`Error: ${error.message}`);
     } finally {
       setIsLoading(false);
     }

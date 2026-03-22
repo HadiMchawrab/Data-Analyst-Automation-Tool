@@ -1,14 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
-import json
-import traceback
 import logging
-from typing import List
-from routes import router  # Updated import path since we're in the same directory
+from routes import router
 
-
-# Configure minimal console-only logging
 logging.basicConfig(
     level=logging.WARNING,
     format='%(levelname)s: %(message)s'
@@ -17,10 +12,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Configure CORS
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://backend:5000,http://localhost:5000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

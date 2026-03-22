@@ -2,57 +2,67 @@ import sys
 import os
 from pathlib import Path
 import base64
-# Add the project root to the Python path
+
 project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
 
-from typing import TypedDict
+from typing import TypedDict, List, Dict
 from langgraph.graph import StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
-from web_scraper.scraper import scrape
 import pandas as pd
 import json
 import logging
 from dotenv import load_dotenv
 import requests
+from utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 if not load_dotenv():
     logging.warning("Failed to load .env file. Ensure it exists and is properly configured.")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 if not CLAUDE_API_KEY:
     raise ValueError("CLAUDE_API_KEY is not set. Please check your .env file.")
-model = ChatAnthropic(model_name="claude-3-7-sonnet-20250219", temperature=0, anthropic_api_key=CLAUDE_API_KEY, max_tokens = 8192 )
-model_GPT  = ChatOpenAI(model_name="gpt-4o", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), max_tokens = 4052)
+
+NOTEBOOK_URL = os.getenv("NOTEBOOK_URL", "http://notebook:7000")
+CLAUDE_SONNET_MODEL = "claude-3-7-sonnet-20250219"
+GPT_MODEL = "gpt-4o"
+
+
+def get_claude_model():
+    return ChatAnthropic(model_name=CLAUDE_SONNET_MODEL, temperature=0, anthropic_api_key=CLAUDE_API_KEY, max_tokens=8192)
+
+
+def get_gpt_model():
+    return ChatOpenAI(model_name=GPT_MODEL, temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), max_tokens=4052)
 
 class State(TypedDict):
-    tables: set  # set of dictionaries {'table1': ['col1', 'col2'], 'table2': ['col1', 'col2']}
-    adjusted_columns: set # set of dictionaries {'table1': ['col1:datatype', 'col2:datatype'], 'table2': ['col1:datatype', 'col2:datatype']}
-    data_frames: set # set of data frames created from the tables
-    csv_files: set # initial set of csv files, we need them to create the data frames from tables
-    topic: str # topic of the conversation 
-    Relationship: str #the relationship between the tables columns, ML Models and the topic at hand
-    ML_Models: set  
-    DF_Info: set 
-    Analysis: set 
-    Pictures: set 
-    Pictures_Analysis: set
-    Reqs : set
-    scripts: set # set of dictionaries of data frames and the scripts to run on them
-    executed_notebook: set # the executed notebook after running the scripts on the data frames
-    chosen_models : set # the chosen models after running the analysis on the images
-    explained_models : set
-    Last_Analysis: str # the analysis of the last model and the last data frame after running the analysis on the images
-    Last_Model: str # the last model after running the analysis on the images
-    Last_DF: str # the last data frame after running the analysis on the images
-    FinalReqs: set # the final requirements after running the training scripts on the data frames
-    FinalScripts: set # the final scripts after running the training scripts on the data frames
+    tables: List[Dict[str, List[str]]]
+    adjusted_columns: Dict[str, List[str]]
+    data_frames: dict
+    csv_files: List[str]
+    topic: str
+    Relationship: str
+    ML_Models: List[str]
+    DF_Info: dict
+    Analysis: dict
+    Pictures: dict
+    Pictures_Analysis: dict
+    Reqs: dict
+    scripts: dict
+    executed_notebook: dict
+    chosen_models: str
+    explained_models: str
+    Last_Analysis: str
+    Last_Model: str
+    Last_DF: str
+    FinalReqs: str
+    FinalScripts: str
 
 
 
@@ -161,28 +171,10 @@ def generate_analysis(state: State) -> State:
                                   
 
         
-        logging.info(f"Message Sent to AI")
-        ai_message = model_GPT.invoke(input_messages)
-        logging.info(ai_message.content)
-        raw_content = ai_message.content.strip()
-        logging.info(f"Claude raw response: {raw_content}")
+        logging.info(f"Generating analysis for {table_name}")
+        ai_message = get_gpt_model().invoke(input_messages)
+        parsed_json = parse_llm_json(ai_message.content, f"generate_analysis ({table_name})")
 
-        json_text = None
-        if raw_content.startswith("json"):
-            start_index = raw_content.find("json") + len("json")
-            end_index = raw_content.find("", start_index)
-            json_text = raw_content[start_index:end_index].strip()
-        elif raw_content.startswith(""):
-            json_text = raw_content.strip("").strip()
-        else:
-            json_text = raw_content  # Try parsing whatever we get
-        try:
-            parsed_json = json.loads(json_text[7:-3])
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse Claude response:\n{json_text}")
-            raise ValueError("Claude's response was not valid JSON.") from e
-            
-        # Store results using string table_name as dictionary key
         Reqs[table_name] = parsed_json.get("Reqs", "No Reqs returned")
         scripts[table_name] = parsed_json.get("Scripts", "No Scripts returned")        
         
@@ -240,7 +232,7 @@ def send_to_notebook(reqs: dict, scripts: dict, dfs: dict):
         try:
             logger.debug(f"Sending POST request to notebook service with {len(files)} files")
             response = requests.post(
-                "http://notebook:7000/analyze-data",
+                f"{NOTEBOOK_URL}/analyze-data",
                 data=data,
                 files=files,
                 timeout=600  # 10 minute timeout
@@ -363,21 +355,8 @@ def analyze_images(state: State) -> State:
 
             try:
                 logging.info(f"Sending analysis request for table {table_name}")
-                ai_message = model_GPT.invoke(messages)
-                logging.info(ai_message.content)
-                raw_content = ai_message.content.strip()
-
-                json_text = None
-                if raw_content.startswith("json"):
-                    start_index = raw_content.find("json") + len("json")
-                    end_index = raw_content.find("", start_index)
-                    json_text = raw_content[start_index:end_index].strip()
-                elif raw_content.startswith(""):
-                    json_text = raw_content.strip("").strip()
-                else:
-                    json_text = raw_content
-
-                parsed_json = json.loads(json_text[7:-3])
+                ai_message = get_gpt_model().invoke(messages)
+                parsed_json = parse_llm_json(ai_message.content, f"analyze_images ({table_name})")
                 ml_mod[table_name] = parsed_json.get("RecommendedModel", "No Model returned")
                 model_analysis[table_name] = parsed_json.get("Insights", "No Insights returned")
             except Exception as e:
@@ -405,26 +384,8 @@ def analyze_images(state: State) -> State:
                             {'}'}```""")
         ]
 
-    logging.info(f"Message Sent to AI")
-    ai_message2 = model_GPT.invoke(messages)
-    logging.info(ai_message2.content)
-    raw_content2 = ai_message2.content.strip()
-    logging.info(f"Claude raw response: {raw_content2}")
-
-    json_text = None
-    if raw_content2.startswith("json"):
-        start_index = raw_content2.find("json") + len("json")
-        end_index = raw_content2.find("", start_index)
-        json_text = raw_content2[start_index:end_index].strip()
-    elif raw_content2.startswith(""):
-        json_text = raw_content2.strip("").strip()
-    else:
-        json_text = raw_content2  # Try parsing whatever we get
-    try:
-        parsed_json2 = json.loads(json_text[7:-3])
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to parse Claude response:\n{json_text}")
-        raise ValueError("Claude's response was not valid JSON.") from e
+    ai_message2 = get_gpt_model().invoke(messages)
+    parsed_json2 = parse_llm_json(ai_message2.content, "analyze_images (best model selection)")
 
     Last_DF = parsed_json2.get("Last_DF", "No Last DF returned")
     Last_Model = parsed_json2.get("Last_Model", "No Last Model returned")
@@ -457,29 +418,9 @@ def generate_train(state: State) -> State:
                             {'}'}```""")
                             ]
 
-    logging.info(f"Message Sent to AI")
-    ai_message = model_GPT.invoke(messages)
-    logging.info(f"Message Sent to AI")
-    ai_message2 = model_GPT.invoke(messages)
-    logging.info(ai_message2.content)
-    raw_content2 = ai_message2.content.strip()
-    logging.info(f"Claude raw response:final {raw_content2}")
-
-    json_text = None
-    if raw_content2.startswith("json"):
-        start_index = raw_content2.find("json") + len("json")
-        end_index = raw_content2.find("", start_index)
-        json_text = raw_content2[start_index:end_index].strip()
-    elif raw_content2.startswith(""):
-        json_text = raw_content2.strip("").strip()
-    else:
-        json_text = raw_content2  # Try parsing whatever we get
-    try:
-        parsed_json3 = json.loads(json_text[7:-3])
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to parse Claude response:\n{json_text}")
-        raise ValueError("Claude's response was not valid JSON.") from e
-    logging.info(f"Claude raw response: {parsed_json3}")
+    ai_message = get_gpt_model().invoke(messages)
+    parsed_json3 = parse_llm_json(ai_message.content, "generate_train")
+    logging.info(f"Training script generated successfully")
     Final_Scripts = parsed_json3.get("LScripts", "No Last DF returned")
     Final_Reqs = parsed_json3.get("LRequiremenets", "No Last Model returned")
 
@@ -605,7 +546,7 @@ def check_array_size(shape):
             # Use notebook:7000 instead of localhost:7000 when running in Docker
             logger.debug(f"Sending POST request to notebook service train-data endpoint")
             response = requests.post(
-                "http://notebook:7000/train-data",
+                f"{NOTEBOOK_URL}/train-data",
                 data=data,
                 files=files,
                 timeout=600  # 10 minute timeout
@@ -681,12 +622,12 @@ def call_notebook_train(state: State) -> State:
 
 
 
-graph_builder.add_node(into_data_frames, "into_data_frames")
-graph_builder.add_node(generate_analysis, "generate_analysis")
-graph_builder.add_node(call_notebook_service, "call_notebook_service")
-graph_builder.add_node(analyze_images, "analyze_images")
-graph_builder.add_node(generate_train, "generate_train")
-graph_builder.add_node(call_notebook_train, "call_notebook_train")
+graph_builder.add_node("into_data_frames", into_data_frames)
+graph_builder.add_node("generate_analysis", generate_analysis)
+graph_builder.add_node("call_notebook_service", call_notebook_service)
+graph_builder.add_node("analyze_images", analyze_images)
+graph_builder.add_node("generate_train", generate_train)
+graph_builder.add_node("call_notebook_train", call_notebook_train)
 
 graph_builder.add_edge("into_data_frames", "generate_analysis")
 graph_builder.add_edge("generate_analysis", "call_notebook_service")
@@ -733,43 +674,41 @@ def test_graph2():
     print(final_state2)
     
 def run_graph2(data: dict) -> State:
-    # Transform tables from {table: columns} to [{table: columns}]
     tables_list = [
-        {table_name: columns} 
+        {table_name: columns}
         for table_name, columns in data['tables'].items()
     ]
-    print(tables_list)
-    
+
     initial_state = {
         'tables': tables_list,
         'adjusted_columns': {},
         'data_frames': {},
-        'csv_files': data['csv_files'],
+        'csv_files': list(data['csv_files']) if not isinstance(data['csv_files'], list) else data['csv_files'],
         'topic': data['topic'],
         'Relationship': data['Relationship'],
         'ML_Models': data['ML_Models'],
-        'DF_Info':{},
-        'Analysis':{},
-        'Pictures':{},
-        'Pictures_Analysis':{},
+        'DF_Info': {},
+        'Analysis': {},
+        'Pictures': {},
+        'Pictures_Analysis': {},
         'Reqs': {},
-        'scripts': {}, 
+        'scripts': {},
         'executed_notebook': {},
-        'chosen_models': {},
-        'explained_models': {},
-        'FinalReqs': {},
-        'FinalScripts': {},
-        'Last_Analysis': {},
-        'Last_Model': {},
-        'Last_DF': {},
+        'chosen_models': '',
+        'explained_models': '',
+        'FinalReqs': '',
+        'FinalScripts': '',
+        'Last_Analysis': '',
+        'Last_Model': '',
+        'Last_DF': '',
         'executed_training': {},
         'images_bytes': {}
     }
-    
-    print(initial_state)
+
+    logging.info("Starting graph2 execution")
     final_state2 = graph2.invoke(initial_state)
-    print(final_state2)
-    
+    logging.info("Graph2 execution completed")
+
     return {
         'tables': final_state2.get('tables', []),
         'adjusted_columns': final_state2.get('adjusted_columns', {}),
@@ -784,10 +723,10 @@ def run_graph2(data: dict) -> State:
         'Reqs': final_state2.get('Reqs', {}),
         'scripts': final_state2.get('scripts', {}),
         'executed_notebook': final_state2.get('executed_notebook', {}),
-        'chosen_models': final_state2.get('chosen_models', {}),
-        'explained_models': final_state2.get('explained_models', str),
-        'FinalReqs': final_state2.get('FinalReqs', str),
-        'FinalScripts': final_state2.get('FinalScripts', str),
+        'chosen_models': final_state2.get('chosen_models', ''),
+        'explained_models': final_state2.get('explained_models', ''),
+        'FinalReqs': final_state2.get('FinalReqs', ''),
+        'FinalScripts': final_state2.get('FinalScripts', ''),
         'Last_Analysis': final_state2.get('Last_Analysis', ''),
         'Last_DF': final_state2.get('Last_DF', ''),
         'executed_training': final_state2.get('executed_training', {}),

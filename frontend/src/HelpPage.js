@@ -54,19 +54,6 @@ const HelpPage = () => {
             <li>See how many columns you've selected</li>
           </ul>
         </section>
-
-        <section className="help-section">
-          <h2>Step 3: Select Tables and Columns</h2>
-          <p>
-            When you click on a topic, you can:
-          </p>
-          <ul>
-            <li>Select multiple tables to add to the model analysis</li>
-            <li>Choose specific columns from each table</li>
-            <li>Add or remove table selections as needed</li>
-            <li>See how many columns you've selected</li>
-          </ul>
-        </section>
         
         <section className="help-section">
           <h2>Tips</h2>
