@@ -2,12 +2,10 @@ fastapi
 uvicorn
 python-multipart
 pydantic
-langchain-anthropic
 langchain-openai
 langchain-core
 langgraph
 langsmith
-anthropic
 openai
 pandas
 python-dotenv

@@ -9,7 +9,7 @@ sys.path.append(project_root)
 from typing import TypedDict, List, Dict
 from langgraph.graph import StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 import sqlite3
 import pandas as pd
 import json
@@ -19,15 +19,15 @@ from utils import parse_llm_json
 
 load_dotenv()
 
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-if CLAUDE_API_KEY is None:
-    raise ValueError("CLAUDE_API_KEY environment variable not set.")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if OPENAI_API_KEY is None:
+    raise ValueError("OPENAI_API_KEY environment variable not set.")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Model constants
-CLAUDE_SONNET_MODEL = "claude-3-7-sonnet-20250219"
-CLAUDE_HAIKU_MODEL = "claude-3-5-haiku-20241022"
+GPT_MODEL = "gpt-4o"
+GPT_MINI_MODEL = "gpt-4o-mini"
 
 
 class State(TypedDict):
@@ -77,7 +77,7 @@ def get_table_columns(state: dict, db_name: str = 'temp.db') -> dict:
 def analyze_tables_node(state: State):
     tables = state["tables"]
     tables_str = "\n".join([f"{table_name}: {columns}" for table in tables for table_name, columns in table.items()])
-    model = ChatAnthropic(model_name=CLAUDE_SONNET_MODEL, temperature=0, anthropic_api_key=CLAUDE_API_KEY)
+    model = ChatOpenAI(model_name=GPT_MODEL, temperature=0, openai_api_key=OPENAI_API_KEY)
     input_messages = [
         SystemMessage(content="""Given tables and columns names, extract the topic of the database.
                                  Provide 4 possible topics where machine learning models would be implemented on tabular database similar to the one above to improve the performance of such a company.
@@ -116,11 +116,11 @@ def analyze_tables_node(state: State):
 
 
 def suggest_models_node(state: State):
-    """Suggest additional ML models for each topic using Claude directly (replaces web scraping)."""
-    model = ChatAnthropic(
-        model_name=CLAUDE_HAIKU_MODEL,
+    """Suggest additional ML models for each topic using LLM directly (replaces web scraping)."""
+    model = ChatOpenAI(
+        model_name=GPT_MINI_MODEL,
         temperature=0,
-        anthropic_api_key=CLAUDE_API_KEY
+        openai_api_key=OPENAI_API_KEY
     )
     ans = {}
     ModelsPerTopic = {}
@@ -167,10 +167,10 @@ def suggest_models_node(state: State):
 
 
 def relevance_node(state: State):
-    model = ChatAnthropic(
-        model_name=CLAUDE_SONNET_MODEL,
+    model = ChatOpenAI(
+        model_name=GPT_MODEL,
         temperature=0,
-        anthropic_api_key=CLAUDE_API_KEY
+        openai_api_key=OPENAI_API_KEY
     )
     tables = state["tables"]
     tables_str = "\n".join([f"{table_name}: {columns}" for table in tables for table_name, columns in table.items()])

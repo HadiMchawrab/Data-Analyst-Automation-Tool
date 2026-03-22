@@ -9,7 +9,6 @@ sys.path.append(project_root)
 from typing import TypedDict, List, Dict
 from langgraph.graph import StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 import pandas as pd
 import json
@@ -25,21 +24,16 @@ if not load_dotenv():
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-if not CLAUDE_API_KEY:
-    raise ValueError("CLAUDE_API_KEY is not set. Please check your .env file.")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY is not set. Please check your .env file.")
 
 NOTEBOOK_URL = os.getenv("NOTEBOOK_URL", "http://notebook:7000")
-CLAUDE_SONNET_MODEL = "claude-3-7-sonnet-20250219"
 GPT_MODEL = "gpt-4o"
 
 
-def get_claude_model():
-    return ChatAnthropic(model_name=CLAUDE_SONNET_MODEL, temperature=0, anthropic_api_key=CLAUDE_API_KEY, max_tokens=8192)
-
-
 def get_gpt_model():
-    return ChatOpenAI(model_name=GPT_MODEL, temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"), max_tokens=4052)
+    return ChatOpenAI(model_name=GPT_MODEL, temperature=0, openai_api_key=OPENAI_API_KEY, max_tokens=4052)
 
 class State(TypedDict):
     tables: List[Dict[str, List[str]]]
@@ -120,7 +114,7 @@ def generate_analysis(state: State) -> State:
     logging.info(f"Tables for analysis: {table_names}")
     
     for table_name in table_names:
-        # Generate analysis for each DataFrame using CLAUDE
+        # Generate analysis for each DataFrame
         logging.info(f"Generating analysis for {table_name}")
         adjusted_columns = state['adjusted_columns'][table_name]
         adjusted_columns_str = str(adjusted_columns)
