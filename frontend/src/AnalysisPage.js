@@ -52,7 +52,9 @@ const AnalysisPage = () => {
               }
             },
             tables: submissionData.tables,
-            images_bytes: data.images
+            images_bytes: data.images_bytes,
+            executed_training: data.executed_training,
+            training_retries: data.training_retries || 0
           };
           navigate('/data-analysis', { state: analysisState });
         }

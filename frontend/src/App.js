@@ -12,22 +12,10 @@ import './CSVManager.css';
 function App() {
   const [topics, setTopics] = useState([]);
   const [tables, setTables] = useState([]);
-  const [columnsByTable, setColumnsByTable] = useState({});
-  const [analyzedArticles, setAnalyzedArticles] = useState({});
-  const [relationships, setRelationships] = useState({});
-  const [explanations, setExplanations] = useState({});
-  const [modelsPerTopic, setModelsPerTopic] = useState({});
-  const [mlModels, setMlModels] = useState([]);
 
   const handleProcessComplete = (result) => {
     setTopics(result.topics || []);
     setTables(result.tables || []);
-    setColumnsByTable(result.columnsByTable || {});
-    setAnalyzedArticles(result.analyzedArticles || {});
-    setRelationships(result.relationships || {});
-    setExplanations(result.explanations || {});
-    setModelsPerTopic(result.modelsPerTopic || {});
-    setMlModels(result.mlModels || []);
   };
 
   return (
@@ -51,12 +39,6 @@ function App() {
                 <ResultsPage
                   topics={topics}
                   tables={tables}
-                  columnsByTable={columnsByTable}
-                  analyzedArticles={analyzedArticles}
-                  relationships={relationships}
-                  explanations={explanations}
-                  modelsPerTopic={modelsPerTopic}
-                  mlModels={mlModels}
                 />
               } 
             />
