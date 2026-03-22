@@ -63,6 +63,9 @@ class State(TypedDict):
     Last_DF: str
     FinalReqs: str
     FinalScripts: str
+    executed_training: dict
+    training_retries: int
+    training_feedback: str
 
 
 
@@ -287,7 +290,7 @@ def call_notebook_service(state: State) -> State:
     
     try:
         notebook_result = send_to_notebook(reqs, scripts, dfs)
-        return state
+        return {"executed_notebook": notebook_result}
     except Exception as e:
         logger.error(f"Error in call_notebook_service: {str(e)}")
         raise
@@ -296,9 +299,9 @@ def call_notebook_service(state: State) -> State:
 def analyze_images(state: State) -> State:
     ml_mod = {}
     model_analysis = {}
-    Last_Analysis = str
-    Last_Model = str
-    Last_DF = str
+    Last_Analysis = ""
+    Last_Model = ""
+    Last_DF = ""
     images_bytes = {}  # Store base64 encoded images per table
 
     # Get table names from the data_frames state
@@ -401,26 +404,54 @@ def analyze_images(state: State) -> State:
 
 
 def generate_train(state: State) -> State:
-    stringified_analysis = str(state['Analysis'])
     stringified_model = str(state['chosen_models'])
+    retry_count = state.get('training_retries', 0)
 
     messages = [
     SystemMessage(content=("You are an expert data scientist. "
-        "Given the ML model to use and the analysis and the data frame, generate a python script that would train the model on the data frame."
-       
+        "Given the ML model to use and the analysis and the data frame, generate a python script that would train the model on the data frame. "
+        "The script MUST evaluate the trained model and output metrics in a specific parseable format."
     )),
-    HumanMessage(content = f"""Return the response *only* in this strict JSON format, with no additional text or explanations:     
+    HumanMessage(content = f"""Return the response *only* in this strict JSON format, with no additional text or explanations:
                 ```json
                             {'{'}
-                                "LRequiremenets": "All the requirements to be installed to run the below scripts seperated by a single space between each requirement, and the requirements should be in a single line",
-                                "LScripts": "Generate a full python text, which would run the dataframe {state['Last_DF']} and train the model {stringified_model} on it, and the script should be in a single line and separated by \n. Also save ethe result of the training in a file called {state['Last_DF']}_model.pkl, and the path should be relative to the notebook that will be running the scripts."
-                                
+                                "LRequiremenets": "All the requirements to be installed to run the below scripts separated by a single space between each requirement, and the requirements should be in a single line (always include scikit-learn)",
+                                "LScripts": "Generate a full python script that does the following in order:
+1. Uses the dataframe called {state['Last_DF']} (already loaded, do not re-read the CSV).
+2. Prepares features and target variable appropriately for the model {stringified_model}.
+3. Splits the data into train/test sets (80/20 split) using sklearn.model_selection.train_test_split.
+4. Trains the model {stringified_model} on the training set.
+5. Saves the trained model to /notebook_output/{state['Last_DF']}/{state['Last_DF']}_model.pkl using joblib (the directory already exists).
+6. Generates predictions on the test set.
+7. Computes evaluation metrics using sklearn.metrics:
+   - For classification: accuracy_score, precision_score (average='weighted'), recall_score (average='weighted'), f1_score (average='weighted')
+   - For regression: mean_squared_error, r2_score, mean_absolute_error
+8. Collects ALL metrics into a dictionary called training_metrics with these keys:
+   - 'model_name': the class name of the model (e.g. 'RandomForestClassifier')
+   - 'task_type': either 'classification' or 'regression'
+   - Plus all computed metric names as keys with their float values
+9. At the very end, prints the metrics in this EXACT format (mandatory, do not skip):
+   print('###METRICS_START###')
+   import json as _json_metrics
+   print(_json_metrics.dumps(training_metrics))
+   print('###METRICS_END###')
+
+The script should handle categorical columns by encoding them (e.g. LabelEncoder or pd.get_dummies) before training. Use try/except around the training to handle errors gracefully."
+
                             {'}'}```""")
                             ]
 
+    # If this is a retry, add feedback about previous attempt
+    feedback = state.get('training_feedback', '')
+    if feedback and retry_count > 0:
+        messages.append(HumanMessage(content=f"""IMPORTANT: This is retry attempt #{retry_count}. The previous training attempt had these results:
+{feedback}
+Adjust your approach: try different hyperparameters, feature engineering, different preprocessing, or a different variant of the model. Do NOT repeat the same approach."""))
+        logging.info(f"Training retry #{retry_count} with feedback: {feedback[:200]}...")
+
     ai_message = get_gpt_model().invoke(messages)
     parsed_json3 = parse_llm_json(ai_message.content, "generate_train")
-    logging.info(f"Training script generated successfully")
+    logging.info(f"Training script generated successfully (attempt #{retry_count + 1})")
     Final_Scripts = parsed_json3.get("LScripts", "No Last DF returned")
     Final_Reqs = parsed_json3.get("LRequiremenets", "No Last Model returned")
 
@@ -607,14 +638,73 @@ def call_notebook_train(state: State) -> State:
         df_dict = {}  # Empty dictionary if not found
     
     try:
-        # Call send_to_training with the string parameters
         notebook_result = send_to_training(reqs, scripts, df_dict)
-        state["executed_training"] = notebook_result
-        return state
+        return {"executed_training": notebook_result}
     except Exception as e:
         logger.error(f"Error in call_notebook_train: {str(e)}")
         raise
 
+
+def evaluate_training(state: State) -> State:
+    """Evaluate training results and decide whether to retry or accept."""
+    metrics = state.get("executed_training", {}).get("metrics", {})
+    retries = state.get("training_retries", 0)
+
+    # Build feedback for potential retry
+    feedback = ""
+    if not metrics:
+        feedback = "The training script did not output any metrics. Ensure the script prints metrics using the ###METRICS_START### and ###METRICS_END### markers."
+    else:
+        task_type = metrics.get("task_type", "unknown")
+        if task_type == "classification":
+            acc = metrics.get("accuracy_score", 0)
+            f1 = metrics.get("f1_score", 0)
+            feedback = (f"Classification results: accuracy={acc:.4f}, f1={f1:.4f}. "
+                       f"Target: accuracy >= 0.6 or f1 >= 0.55. "
+                       f"Try different hyperparameters, feature selection, or preprocessing.")
+        elif task_type == "regression":
+            r2 = metrics.get("r2_score", 0)
+            mse = metrics.get("mean_squared_error", 0)
+            feedback = (f"Regression results: r2={r2:.4f}, mse={mse:.4f}. "
+                       f"Target: r2 >= 0.4. "
+                       f"Try different hyperparameters, feature engineering, or scaling.")
+
+    logging.info(f"Training evaluation (attempt #{retries + 1}): {feedback[:200]}")
+
+    return {
+        "training_retries": retries + 1,
+        "training_feedback": feedback
+    }
+
+
+def should_retry_training(state: State) -> str:
+    """Routing function: decide whether to retry training or accept results."""
+    metrics = state.get("executed_training", {}).get("metrics", {})
+    retries = state.get("training_retries", 0)
+
+    if retries >= 3:
+        logging.info(f"Max retries ({retries}) reached, accepting results")
+        return "accept"
+
+    if not metrics:
+        logging.info("No metrics found, retrying")
+        return "retry"
+
+    task_type = metrics.get("task_type", "")
+    if task_type == "classification":
+        if metrics.get("accuracy_score", 0) >= 0.6 or metrics.get("f1_score", 0) >= 0.55:
+            logging.info(f"Classification metrics acceptable, accepting")
+            return "accept"
+    elif task_type == "regression":
+        if metrics.get("r2_score", 0) >= 0.4:
+            logging.info(f"Regression metrics acceptable, accepting")
+            return "accept"
+    else:
+        logging.info(f"Unknown task type '{task_type}', accepting")
+        return "accept"
+
+    logging.info(f"Metrics below threshold (attempt #{retries}), retrying")
+    return "retry"
 
 
 
@@ -628,14 +718,23 @@ graph_builder.add_node("call_notebook_service", call_notebook_service)
 graph_builder.add_node("analyze_images", analyze_images)
 graph_builder.add_node("generate_train", generate_train)
 graph_builder.add_node("call_notebook_train", call_notebook_train)
+graph_builder.add_node("evaluate_training", evaluate_training)
 
 graph_builder.add_edge("into_data_frames", "generate_analysis")
 graph_builder.add_edge("generate_analysis", "call_notebook_service")
 graph_builder.add_edge("call_notebook_service", "analyze_images")
 graph_builder.add_edge("analyze_images", "generate_train")
 graph_builder.add_edge("generate_train", "call_notebook_train")
+graph_builder.add_edge("call_notebook_train", "evaluate_training")
+
+# Conditional edge: retry training or accept results
+graph_builder.add_conditional_edges(
+    "evaluate_training",
+    should_retry_training,
+    {"retry": "generate_train", "accept": "__end__"}
+)
+
 graph_builder.set_entry_point("into_data_frames")
-graph_builder.set_finish_point("call_notebook_train")
 
 graph2 = graph_builder.compile()
 
@@ -664,14 +763,15 @@ def test_graph2():
         'Last_Model': {},
         'Last_DF': {},
         'executed_training': {},
+        'training_retries': 0,
+        'training_feedback': '',
         'images_bytes': {}
 
     }
 
-    # Run the graph with the sample state
-    print("Initial State:")
+    logging.info("Starting test graph2 execution")
     final_state2 = graph2.invoke(initial_state)
-    print(final_state2)
+    logging.info(f"Test graph2 completed: {list(final_state2.keys())}")
     
 def run_graph2(data: dict) -> State:
     tables_list = [
@@ -702,6 +802,8 @@ def run_graph2(data: dict) -> State:
         'Last_Model': '',
         'Last_DF': '',
         'executed_training': {},
+        'training_retries': 0,
+        'training_feedback': '',
         'images_bytes': {}
     }
 
@@ -730,6 +832,7 @@ def run_graph2(data: dict) -> State:
         'Last_Analysis': final_state2.get('Last_Analysis', ''),
         'Last_DF': final_state2.get('Last_DF', ''),
         'executed_training': final_state2.get('executed_training', {}),
+        'training_retries': final_state2.get('training_retries', 0),
         'images_bytes': final_state2.get('images_bytes', {})
     }
 
