@@ -6,19 +6,16 @@ from pathlib import Path
 project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
 
-from typing import TypedDict, List, Dict, Any
-# from IPython.display import display
-# from PIL import Image
+from typing import TypedDict, List, Dict
 from langgraph.graph import StateGraph
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_anthropic import ChatAnthropic
-from web_scraper.scraper import scrape, scrape_remote
 import sqlite3
 import pandas as pd
 import json
 import logging
 from dotenv import load_dotenv
-from typing import List, Dict
+from utils import parse_llm_json
 
 load_dotenv()
 
@@ -28,26 +25,26 @@ if CLAUDE_API_KEY is None:
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class State(TypedDict):
-    tables: set 
-    analyzed_topics: list[set]
-    csv_files: set
-    topic: List[str]
-    ScrapedArticles: set
-    AnalyzedArticles: set[dict[str, dict[str, str]]]
-    Relationship: set
-    Needs: set
-    ModelsPerTopic: set
-    ML_Models1: set
-    GPT_Columns: set
-    AdjustedColumns: set
+# Model constants
+CLAUDE_SONNET_MODEL = "claude-3-7-sonnet-20250219"
+CLAUDE_HAIKU_MODEL = "claude-3-5-haiku-20241022"
 
-    
+
+class State(TypedDict):
+    tables: List[Dict[str, List[str]]]
+    analyzed_topics: List[Dict[str, str]]
+    csv_files: List[str]
+    topic: List[str]
+    AnalyzedArticles: Dict[str, Dict[str, str]]
+    Relationship: Dict[str, List[str]]
+    Needs: Dict[str, List[str]]
+    ModelsPerTopic: Dict[str, str]
+    ML_Models1: List[str]
+    GPT_Columns: Dict[str, List]
+    AdjustedColumns: Dict[str, List[str]]
+
 
 graph_builder = StateGraph(State)
-
-
-
 
 
 def get_table_columns(state: dict, db_name: str = 'temp.db') -> dict:
@@ -70,152 +67,108 @@ def get_table_columns(state: dict, db_name: str = 'temp.db') -> dict:
             adjusted_columns[table_name] = column_dtypes
     except Exception as e:
         logging.error(f"Error processing CSV files: {str(e)}")
-        raise e
+        raise
     finally:
         conn.close()
-    
-    # Return a dictionary with 'tables' as the key
+
     return {"tables": results, "adjusted_columns": adjusted_columns}
 
 
-
-
 def analyze_tables_node(state: State):
-    # Load environment variables from .env file
-    load_dotenv()
-
-    # Retrieve the API key from the environment
-    CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
-    # stringify the tables
     tables = state["tables"]
     tables_str = "\n".join([f"{table_name}: {columns}" for table in tables for table_name, columns in table.items()])
-    model = ChatAnthropic(model_name="claude-3-7-sonnet-20250219", temperature=0, anthropic_api_key=CLAUDE_API_KEY)
-    input_messages= [SystemMessage(content = """Given tables and columns names, extract the topic of the database. 
-                                                Provide 4 possible topics where  machine learning models would be implemented on tabular database similar to the one above to improve the performance of such a company.
-                                                Hence the 4 topics you are returning are the fields we want to dive into in our web scraper, hence they should be clear and have the key words in place
-                                                Return them in a JSON array of objects with topic names and reasoning"""), 
-                     HumanMessage(content = """Return the response *only* in this strict JSON format, with no additional text or explanations. DON'T GENERATE ANY TEXT OUTSIDE of the json format("Machine learning models employed in" does not change in all of the topics):
-                    
-                                        json
+    model = ChatAnthropic(model_name=CLAUDE_SONNET_MODEL, temperature=0, anthropic_api_key=CLAUDE_API_KEY)
+    input_messages = [
+        SystemMessage(content="""Given tables and columns names, extract the topic of the database.
+                                 Provide 4 possible topics where machine learning models would be implemented on tabular database similar to the one above to improve the performance of such a company.
+                                 The 4 topics should be clear with key words in place.
+                                 Return them in a JSON array of objects with topic names and reasoning."""),
+        HumanMessage(content="""Return the response *only* in this strict JSON format, with no additional text or explanations:
+                                json
+                                {
+                                    "answer": [
                                         {
-                                            "answer": [
-                                                {
-                                                    "topic": "'Topic 1' and why it is important to the company and how it optimizes the performance of the company",
-                                                    "ML_Models": "ML Models 1 inferred by Claude from the articles",
-                                                    "reasoning": "Reasoning 1 or the relationship between the topic and the ML Model and what columns and data types could possibly be used in the ML model"
-                                                },
-                                                {
-                                                    "topic": "Machine learning models employed in 'Topic 2'",
-                                                    "ML_Models": "ML Models 2 inferred by Claude from the articles"
-                                                    "reasoning": "Reasoning 2 or the relationship between the topic and the ML Model and what columns and data types could possibly be used in the ML model"
-                                                }
-                                            ]
+                                            "topic": "'Topic 1' and why it is important to the company and how it optimizes the performance of the company",
+                                            "ML_Models": "ML Models 1 inferred by Claude from the articles",
+                                            "reasoning": "Reasoning 1 or the relationship between the topic and the ML Model and what columns and data types could possibly be used in the ML model"
+                                        },
+                                        {
+                                            "topic": "Machine learning models employed in 'Topic 2'",
+                                            "ML_Models": "ML Models 2 inferred by Claude from the articles",
+                                            "reasoning": "Reasoning 2 or the relationship between the topic and the ML Model and what columns and data types could possibly be used in the ML model"
                                         }
-                                                
-                                   """),
-                    HumanMessage(content = f"""Tables and columns names:
-                                        {tables_str}
-                                        """)]
-    
+                                    ]
+                                }"""),
+        HumanMessage(content=f"Tables and columns names:\n{tables_str}")
+    ]
+
     ai_message = model.invoke(input_messages)
-    
-    content = ai_message.content.strip()
-
-    # Look for fenced JSON
-    if "```json" in content:
-        start_index = content.find("```json") + len("```json")
-        end_index = content.find("```", start_index)
-        content = content[start_index:end_index].strip()
-    elif "```" in content:
-        # If just triple backticks
-        content = content.replace("```", "").strip()
-
-    # Now parse
-    try:
-        json_response = json.loads(content)
-    except json.JSONDecodeError as e:
-        logging.error(f"Failed to decode JSON from Claude in analyze_tables_node:\n{content}")
-        raise e
+    json_response = parse_llm_json(ai_message.content, "analyze_tables_node")
 
     ans = json_response['answer']
     topics = [topic["topic"] for topic in ans]
     logging.info(f"Topics: {topics}")
 
     ML_Models1 = [topic["ML_Models"] for topic in ans]
-    
     logging.info(f"ML Models: {ML_Models1}")
+
     return {"analyzed_topics": ans, "topic": topics, "ML_Models1": ML_Models1}
 
 
-
-
-def scrape_node(state: State):
-    model = ChatAnthropic(model_name="claude-3-5-haiku-20241022", temperature=0, anthropic_api_key=CLAUDE_API_KEY)
-    articles = {}
+def suggest_models_node(state: State):
+    """Suggest additional ML models for each topic using Claude directly (replaces web scraping)."""
+    model = ChatAnthropic(
+        model_name=CLAUDE_HAIKU_MODEL,
+        temperature=0,
+        anthropic_api_key=CLAUDE_API_KEY
+    )
     ans = {}
     ModelsPerTopic = {}
-    i = 0
-    logging.info(f"ML Models: {state['ML_Models1']}")
-    for topic in (state["topic"]):
 
-        Disected = state["ML_Models1"][i]
-        ML_MOD = state["ML_Models1"]
-        logging.info(f"ML_MOD: {ML_MOD}") 
-        logging.info(f"Disected: {Disected}")
-        scr_into_str = "\n".join(scrape_remote(query=topic, limit=1))
-        articles[topic] = scr_into_str
+    tables = state["tables"]
+    tables_str = "\n".join([
+        f"{table_name}: {columns}"
+        for table in tables
+        for table_name, columns in table.items()
+    ])
 
+    for i, topic in enumerate(state["topic"]):
+        previous_models = state["ML_Models1"][i]
 
+        input_messages = [
+            SystemMessage(content="""You are an expert data scientist. Given a business topic and database schema,
+                suggest specific machine learning models that would be effective for this use case.
+                Focus on models NOT already mentioned in the previously extracted models.
+                Consider the data types and columns available in the database.
+                Limit suggestions to 3 additional models."""),
+            HumanMessage(content="""Return the response *only* in this strict JSON format, with no additional text:
+                {
+                    "answer": [
+                        {
+                            "Article_Summary": "Analysis of why these ML models are suitable for this topic given the available data",
+                            "ML_Models": "Model1, Model2, Model3"
+                        }
+                    ]
+                }"""),
+            HumanMessage(content=f"Topic: {topic}"),
+            HumanMessage(content=f"Available database tables and columns:\n{tables_str}"),
+            HumanMessage(content=f"Previously suggested ML Models: {previous_models}")
+        ]
 
-        Input_messages= [SystemMessage(content = """You are given 3 web pages in 1 json file, summarize the content in a clear and concise manner.
-                                                    Focus on the machine learning models used in the web page not previously mentioned in the previously extracted ML models from the topic and how they affect the performance of the company."""), 
-                            HumanMessage(content = """DON'T GENERATE ANY TEXT OUTSIDE of the json format, DO NOT output "json", "Json", or any text before the opening brace '{'. Start the output directly with {.
-
-                                    
-                                    {
-                                        "answer": [
-                                            {
-                                        "Article_Summary": "Topic 1 Articles Summary Generated by Claude"(we want to see the relationship between the ML model and the topic at hand and possible type of data used in the model. infer the type of data used in the model from the articles + your own knowledge),
-                                        "ML_Models": "ML Models 1 inferred by Claude from the articles which where not mentioned in my human message or the previous ML Models"(limit the number of models to 3 separated by commas),
-                                        }
-                                        ]
-                                    }  
-                                    """),
-                            HumanMessage(content = articles[topic]),
-                            HumanMessage(content = f"Previous ML Models:{Disected}")]
-        
-        logging.info(f"Message Sent to AI")
-        ai_message = model.invoke(Input_messages)
-        logging.info(ai_message.content)
-        content = ai_message.content
-
-        # Handle fenced JSON
-        if "```json" in content:
-            start_index = content.find("```json") + len("```json")
-            end_index = content.find("```", start_index)
-            content = content[start_index:end_index].strip()
-        elif "```" in content:
-            content = content.replace("```", "").strip()
-
-
-        try:
-            json_response = json.loads(content)
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse JSON from AI message: {content}")
-            raise e
+        logging.info(f"Requesting model suggestions for topic: {topic}")
+        ai_message = model.invoke(input_messages)
+        json_response = parse_llm_json(ai_message.content, f"suggest_models_node (topic: {topic})")
 
         answer = json_response['answer']
         ans[topic] = answer[0]
         ModelsPerTopic[topic] = ans[topic]["ML_Models"]
-        i += 1
-    return {"ScrapedArticles": articles, "AnalyzedArticles": ans, "ModelsPerTopic": ModelsPerTopic}
 
-
+    return {"AnalyzedArticles": ans, "ModelsPerTopic": ModelsPerTopic}
 
 
 def relevance_node(state: State):
     model = ChatAnthropic(
-        model_name="claude-3-7-sonnet-20250219",
+        model_name=CLAUDE_SONNET_MODEL,
         temperature=0,
         anthropic_api_key=CLAUDE_API_KEY
     )
@@ -228,120 +181,76 @@ def relevance_node(state: State):
 
     for i, topic in enumerate(state["topic"]):
         Input_messages = [
-            SystemMessage(content="""You are given the ML models used in the topics and how they would benefit the company, 
+            SystemMessage(content="""You are given the ML models used in the topics and how they would benefit the company,
                                      You are also given the initial tables and column names of my database,
                                      You are given the interpretation of the tables and column names.
-                                     Find the relevance of each of the ML models posed with the tables and columns names of the database.
-                                  """),
+                                     Find the relevance of each of the ML models posed with the tables and columns names of the database."""),
             HumanMessage(content="""Return the response *only* in this strict JSON format, with no additional text or explanations:
                                     json
                                     {
                                         "Relationship": "Explains the relationship between the ML model and the tables and columns names of the database",
-                                        "Columns": "[{table1:[col1,col2]}, {table2:[col1,col]}](Return a list which contains dictionaries with the table name and the 7 columns maximum which GPT chooses as the key to the table name),
+                                        "Columns": "[{table1:[col1,col2]}, {table2:[col1,col]}](Return a list which contains dictionaries with the table name and the 7 columns maximum which GPT chooses as the key to the table name)",
                                         "Needs": "Tell the user how the columns we need for this certain topic are going to be used in training the ML model and what data types are needed for the end goal of the ML model(classification, regression, etc)"
-                                    }
-                                    """),
+                                    }"""),
             HumanMessage(content=f"The initial tables and columns: {tables_str}"),
-            HumanMessage(content=json.dumps(state["analyzed_topics"][i])), 
-            HumanMessage(content=f"modelsWeUse: {state['ModelsPerTopic'][topic]}")]  
+            HumanMessage(content=json.dumps(state["analyzed_topics"][i])),
+            HumanMessage(content=f"modelsWeUse: {state['ModelsPerTopic'][topic]}")
+        ]
 
         ai_response = model.invoke(Input_messages)
-        logging.info(f"Claude response: {ai_response.content}")
-        raw_content = ai_response.content.strip()
-        logging.info(f"Claude raw response: {raw_content}")
+        logging.info(f"Claude response for topic '{topic}': {ai_response.content[:200]}...")
 
-        json_text = None
-        if "```json" in raw_content:
-            start_index = raw_content.find("```json") + len("```json")
-            end_index = raw_content.find("```", start_index)
-            json_text = raw_content[start_index:end_index].strip()
-        elif "```" in raw_content:
-            json_text = raw_content.replace("```", "").strip()
-        else:
-            json_text = raw_content
-
-
-        try:
-            parsed_json = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            logging.error(f"Failed to parse Claude response:\n{json_text}")
-            raise ValueError("Claude's response was not valid JSON.") from e
+        parsed_json = parse_llm_json(ai_response.content, f"relevance_node (topic: {topic})")
 
         Relationships[topic] = [parsed_json.get("Relationship", "No Relationship returned")]
         GPT_Columns[topic] = [parsed_json.get("Columns", "No Columns returned")]
         Needs[topic] = [parsed_json.get("Needs", "No Needs returned")]
 
-
     return {"Relationship": Relationships, "GPT_Columns": GPT_Columns, "Needs": Needs}
-
 
 
 # Add nodes to the graph
 graph_builder.add_node("extract_tables", get_table_columns)
 graph_builder.add_node("analyze_tables", analyze_tables_node)
-graph_builder.add_node("scrape_articles", scrape_node)
+graph_builder.add_node("suggest_models", suggest_models_node)
 graph_builder.add_node("relevance", relevance_node)
 
 # Add edges
 graph_builder.add_edge("extract_tables", "analyze_tables")
-graph_builder.add_edge("analyze_tables", "scrape_articles")
-graph_builder.add_edge("scrape_articles", "relevance")
+graph_builder.add_edge("analyze_tables", "suggest_models")
+graph_builder.add_edge("suggest_models", "relevance")
 
 # Set entry and finish points
 graph_builder.set_entry_point("extract_tables")
 graph_builder.set_finish_point("relevance")
 
-
 # Compile the graph
 graph = graph_builder.compile()
 
 
+def run_graph(csv_files: List[str], descriptions: Dict[str, str] = None) -> State:
+    csv_files = list(csv_files) if not isinstance(csv_files, list) else csv_files
 
-def run_graph(csv_files: List[str], descriptions: Dict[str, str] = None) -> State:   
-    csv_files = set(csv_files)
-    
     initial_state = {
-        "tables": "",
+        "tables": [],
         "analyzed_topics": [],
         "csv_files": csv_files,
         "topic": [],
-        "ScrapedArticles": {},
         "AnalyzedArticles": {},
         "ModelsPerTopic": {},
         "Relationship": {},
         "GPT_Columns": {},
-        "ML_Models1": {},
+        "ML_Models1": [],
         "Needs": {},
         "AdjustedColumns": {}
     }
-    
-    # Run the graph
+
     final_state = graph.invoke(initial_state)
-    
-    print("\nExtracted Tables:")
-    print(final_state["tables"])
-    print("\nTable Analysis:")
-    print(final_state["analyzed_topics"])
-    print("\nTopics:")
-    print(final_state["topic"])
-    print("\n Analyzed Articles:")
-    print(final_state["AnalyzedArticles"])
-    print("\n Models per Topic:")
-    print(final_state["ModelsPerTopic"])
-    print("\n Relationships:")
-    print(final_state["Relationship"])
-    print("\n GPT_Columns:")
-    print(final_state["GPT_Columns"])
-    print("\n Needs:")
-    print(final_state["Needs"])
-    print("\n Adjusted Columns:")
-    print(final_state["AdjustedColumns"])
-    
+
+    logging.info(f"Graph completed. Topics: {final_state.get('topic', [])}")
+
     return final_state
 
 
-def test():
-    run_graph({"csv_files/banking.csv", "csv_files/data.csv"})
-
 if __name__ == "__main__":
-    run_graph({"csv_files/banking.csv", "csv_files/data.csv"})
+    run_graph(["csv_files/banking.csv", "csv_files/data.csv"])

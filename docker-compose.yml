@@ -10,7 +10,7 @@ services:
       - /usr/src/app/node_modules
     environment:
       - NODE_ENV=development
-      - VITE_API_URL=http://backend:5000
+      - REACT_APP_API_URL=http://localhost:5000
     depends_on:
       - backend
     networks:
@@ -30,23 +30,12 @@ services:
       - DEBUG=1
       - PYTHONUNBUFFERED=1
       - NOTEBOOK_URL=http://notebook:7000
+      - ALLOWED_ORIGINS=http://frontend:3000,http://localhost:3000
     depends_on:
-      - selenium
       - notebook
     networks:
       - app-network
     
-  selenium:
-    image: selenium/standalone-chrome:latest
-    ports:
-      - "4444:4444"
-    shm_size: 2g
-    environment:
-      - SE_NODE_SESSION_TIMEOUT=180
-      - SE_NODE_MAX_SESSIONS=5
-    networks:
-      - app-network
-
   notebook:
     build: ./notebook
     ports:
@@ -54,6 +43,8 @@ services:
     volumes:
       - ./notebook:/backend
       - notebook_shared:/notebook_output
+    environment:
+      - ALLOWED_ORIGINS=http://backend:5000,http://localhost:5000
     networks:
       - app-network
 

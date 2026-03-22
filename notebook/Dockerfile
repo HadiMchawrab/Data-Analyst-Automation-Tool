@@ -8,7 +8,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # Create notebook output directory and set permissions
-RUN mkdir -p /notebook_output && chmod -R 777 /notebook_output
+RUN mkdir -p /notebook_output && chmod -R 755 /notebook_output
 
 # Copy app code
 COPY . .
@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 7000
 
 # Run the app
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000", "--reload"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
