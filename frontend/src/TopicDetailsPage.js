@@ -6,8 +6,6 @@ const TopicDetailsPage = () => {
   const location = useLocation();
   const navigate = useNavigate();
   
-  console.log('TopicDetailsPage - Full location state:', location.state);
-  
   const topic = location.state?.topic;
   const allTables = location.state?.tables || [];
   
@@ -34,31 +32,16 @@ const TopicDetailsPage = () => {
   const getAvailableTablesFromAll = () => {
     // Get all available tables from the initial data
     const availableTables = allTables.map(tableObj => Object.keys(tableObj)[0]);
-    console.log('All available tables:', availableTables);
-    
-    // Filter tables - keep only those that have available columns
-    const filteredTables = availableTables.filter(table => hasAvailableColumns(table));
-    console.log('Filtered tables (with available columns):', filteredTables);
-    
-    return filteredTables;
+    return availableTables.filter(table => hasAvailableColumns(table));
   };
 
   // Get available columns that aren't in GPT_Columns for the selected table
   const getAvailableColumnsForTable = (tableName) => {
     const gptData = getGptTablesAndColumns();
     const gptColumns = gptData[tableName] || [];
-    console.log('GPT suggested columns for', tableName, ':', gptColumns);
-    
-    // Get all columns for this table
     const tableObj = allTables.find(obj => Object.keys(obj)[0] === tableName);
     const allColumns = tableObj ? tableObj[tableName] : [];
-    console.log('All available columns for', tableName, ':', allColumns);
-    
-    // Filter out columns that are already in GPT_Columns
-    const filteredColumns = allColumns.filter(column => !gptColumns.includes(column));
-    console.log('Filtered columns for', tableName, ':', filteredColumns);
-    
-    return filteredColumns;
+    return allColumns.filter(column => !gptColumns.includes(column));
   };
   
   const [dropdownRows, setDropdownRows] = useState([
@@ -107,10 +90,13 @@ const TopicDetailsPage = () => {
   const handleContinue = async () => {
     // Get ALL GPT-selected columns from all tables (not just the first one)
     const allGptData = {};
-    if (topic?.GPT_Columns) {
+    if (topic?.GPT_Columns && Array.isArray(topic.GPT_Columns)) {
       topic.GPT_Columns.forEach(gptSet => {
+        if (!Array.isArray(gptSet)) return;
         gptSet.forEach(tableObj => {
+          if (!tableObj || typeof tableObj !== 'object') return;
           Object.entries(tableObj).forEach(([tableName, columns]) => {
+            if (!Array.isArray(columns)) return;
             if (!allGptData[tableName]) {
               allGptData[tableName] = new Set(columns);
             } else {
@@ -120,8 +106,6 @@ const TopicDetailsPage = () => {
         });
       });
     }
-    console.log('GPT_Columns full:', topic.GPT_Columns);
-    console.log('All GPT-selected tables and columns:', allGptData);
 
     // Convert Sets to Arrays
     const mergedTables = {};
@@ -129,8 +113,6 @@ const TopicDetailsPage = () => {
       mergedTables[tableName] = Array.from(columnsSet);
     });
     
-    console.log('Initial GPT-selected tables and columns:', mergedTables);
-
     // Then merge user-selected columns
     // Ensure all GPT tables are initialized even if user selects no columns
 dropdownRows.forEach(row => {
@@ -153,8 +135,6 @@ dropdownRows.forEach(row => {
       }
     });
 
-    console.log('Final merged tables with all columns:', mergedTables);
-
     // Data for backend
     const submissionData = {
       topic: topic.topic,
@@ -162,8 +142,6 @@ dropdownRows.forEach(row => {
       ML_Models: Array.from(topic.ML_Models || []),
       tables: mergedTables
     };
-
-    console.log('Submission data:', submissionData);
 
     // Navigate to analysis with all the data
     navigate('/analysis', { 
@@ -217,12 +195,15 @@ dropdownRows.forEach(row => {
         <div className="topic-info-section">
           <span className="topic-label">GPT Selected Columns:</span>
           <span className="topic-content">
-            {topic.GPT_Columns &&
+            {topic.GPT_Columns && Array.isArray(topic.GPT_Columns) &&
               topic.GPT_Columns.flat().map((tableObj, index) => {
-                const [tableName, columns] = Object.entries(tableObj)[0];
+                if (!tableObj || typeof tableObj !== 'object') return null;
+                const entries = Object.entries(tableObj);
+                if (entries.length === 0) return null;
+                const [tableName, columns] = entries[0];
                 return (
                   <div key={index}>
-                    <em>{tableName}:</em> {columns.join(", ")}
+                    <em>{tableName}:</em> {Array.isArray(columns) ? columns.join(", ") : String(columns)}
                   </div>
                 );
               })}
