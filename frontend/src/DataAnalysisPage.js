@@ -5,11 +5,21 @@ import './DataAnalysisPage.css';
 const DataAnalysisPage = () => {
     const location = useLocation();
     const navigate = useNavigate();
-    const { analysisResult, tables, images_bytes } = location.state || {};
-    
-    console.log('DataAnalysisPage received state:', location.state);
-    console.log('Analysis result:', analysisResult);
-    console.log('Images:', images_bytes);
+    const { analysisResult, tables, images_bytes, executed_training, training_retries } = location.state || {};
+
+    const handleDownloadModel = () => {
+        if (!executed_training?.model_weights) return;
+        const bytes = atob(executed_training.model_weights);
+        const arr = new Uint8Array(bytes.length);
+        for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+        const blob = new Blob([arr], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${executed_training.metrics?.model_name || 'model'}.pkl`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
 
     const handleRetry = () => {
         navigate(-1);
@@ -64,6 +74,65 @@ const DataAnalysisPage = () => {
                 </div>
             )}
 
+            {/* Training Results */}
+            {executed_training && (
+                <div className="training-results">
+                    <h2>Training Results</h2>
+                    <div className="model-info">
+                        <p className={`status-badge ${executed_training.status || ''}`}>
+                            Status: {executed_training.status || 'unknown'}
+                        </p>
+                        {training_retries > 1 && (
+                            <p className="retry-info">Model was retrained {training_retries} time{training_retries !== 1 ? 's' : ''} to improve performance</p>
+                        )}
+                    </div>
+
+                    {executed_training.metrics && Object.keys(executed_training.metrics).length > 0 ? (
+                        <div className="metrics-section">
+                            {executed_training.metrics.model_name && (
+                                <div className="model-info">
+                                    <h3>Model</h3>
+                                    <p>{executed_training.metrics.model_name}
+                                       {executed_training.metrics.task_type && ` (${executed_training.metrics.task_type})`}
+                                    </p>
+                                </div>
+                            )}
+                            <div className="model-info">
+                                <h3>Performance Metrics</h3>
+                                <table className="metrics-table">
+                                    <thead>
+                                        <tr><th>Metric</th><th>Value</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {Object.entries(executed_training.metrics)
+                                            .filter(([key]) => !['model_name', 'task_type', 'classification_report'].includes(key))
+                                            .map(([key, value]) => (
+                                                <tr key={key}>
+                                                    <td>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</td>
+                                                    <td>{typeof value === 'number' ? value.toFixed(4) : String(value)}</td>
+                                                </tr>
+                                            ))
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="model-info">
+                            <p>Training completed but no metrics were captured. The model was saved successfully.</p>
+                        </div>
+                    )}
+
+                    {executed_training.model_weights && (
+                        <div className="model-info">
+                            <button onClick={handleDownloadModel} className="download-model-button">
+                                Download Trained Model (.pkl)
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Selected Data Summary */}
             {tables && Object.keys(tables).length > 0 && (
                 <div className="selected-data">
@@ -90,7 +159,6 @@ const DataAnalysisPage = () => {
                                         alt={`${tableName} Analysis Graph ${index + 1}`}
                                         className="analysis-graph"
                                         onError={(e) => {
-                                            console.error(`Failed to load image for ${tableName}`);
                                             e.target.style.display = 'none';
                                         }}
                                     />
